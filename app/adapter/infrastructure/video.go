@@ -1,9 +1,11 @@
 package infrastructure
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -15,6 +17,33 @@ import (
 
 type WatchCountJsonType struct {
 	Count int `json:"count"`
+}
+
+type UploaderID struct {
+	ID string `json:"id"`
+}
+
+func (i *Infrastructure) CheckUploadAPIRateLimit(ctx context.Context, id string) error {
+	var uploaderID UploaderID
+	hit, err := getFromRedis(ctx, i.redis, "upload"+id, &uploaderID)
+	if err != nil {
+		return err
+	} else if hit {
+		return fmt.Errorf("upload api rate limit")
+	}
+
+	return nil
+}
+
+func (i *Infrastructure) SetUploadAPIRateLimit(ctx context.Context, id string) error {
+	// 24時間のアップロード回数を制限
+	err := setToRedis(ctx, i.redis, "upload"+id, 24*time.Hour, &UploaderID{
+		ID: id,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (i *Infrastructure) GetVideosFromDB(ctx context.Context) ([]*domain.Video, error) {
@@ -37,8 +66,7 @@ func (i *Infrastructure) GetVideosFromDB(ctx context.Context) ([]*domain.Video, 
 				video.Tags = append(video.Tags, tag.TagName)
 			}
 		}
-		video.CreatedAt = time.Now()
-		video.UpdatedAt = time.Now()
+
 		videos = append(videos, video)
 	}
 
@@ -235,4 +263,33 @@ func (i *Infrastructure) CutVideo(ctx context.Context, videoID, userID string, s
 
 	cutURL := fmt.Sprintf("%s/%s/%s", os.Getenv("AWS_S3_URL"), uploadbucketName, key)
 	return cutURL, nil
+}
+
+func (i *Infrastructure) ValidationVideo(video io.ReadSeeker) error {
+	if video == nil {
+		return fmt.Errorf("video is nil")
+	}
+
+	// MP4ファイルのシグネチャとして 'ftyp' を確認
+	const ftyp = "ftyp"
+
+	// 先頭の12バイトだけ読み込む（ftypボックスの確認に十分な範囲）
+	header := make([]byte, 12)
+	_, err := video.Read(header)
+	if err != nil {
+		return err
+	}
+
+	// ReadSeekerを先頭に戻す
+	_, err = video.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+
+	// ヘッダの4バイト目から'ftyp'が存在するかチェック
+	if bytes.Contains(header[4:], []byte(ftyp)) {
+		return nil
+	}
+
+	return fmt.Errorf("invalid video file")
 }

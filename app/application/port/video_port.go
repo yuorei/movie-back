@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"io"
 
 	"github.com/yuorei/video-server/app/domain"
 )
@@ -19,9 +20,12 @@ type VideoInputPort interface {
 
 // ユースケースからインフラを呼び出されるメソッドのインターフェースを定義
 type VideoRepository interface {
+	CheckUploadAPIRateLimit(context.Context, string) error
+	SetUploadAPIRateLimit(context.Context, string) error
 	GetVideosFromDB(context.Context) ([]*domain.Video, error)
 	GetVideosByUserIDFromDB(context.Context, string) ([]*domain.Video, error)
-	ConvertVideoHLS(context.Context, *domain.VideoFile) error
+	ConvertVideoHLS(context.Context, string) error
+	ValidationVideo(io.ReadSeeker) error
 	UploadVideoForStorage(context.Context, *domain.VideoFile) (string, error)
 	GetVideoFromDB(context.Context, string) (*domain.Video, error)
 	InsertVideo(context.Context, string, string, string, string, *string, string, []string, bool, bool, bool, bool) (*domain.UploadVideoResponse, error)
